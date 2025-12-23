@@ -1,44 +1,65 @@
-# Bash script who permit to download the perpetuals futures klines simultaneously.
-# That's mean that the script create few sub-processes for download the data asynchronously
+#!/bin/bash
 
-
-CM_OR_UM="cm"
-SYMBOLS=(AAVEUSD_PERP ADAUSD_PERP ATOMUSD_PERP AVAXUSD_PERP AXSUSD_PERP BCHUSD_PERP BNBUSD_PERP BTCUSD_PERP CRVUSD_PERP DOGEUSD_PERP DOTUSD_PERP EGLDUSD_PERP EOSUSD_PERP ETCUSD_PERP ETHUSD_PERP FILUSD_PERP FTMUSD_PERP GALAUSD_PERP LINKUSD_PERP LTCUSD_PERP LUNAUSD_PERP MANAUSD_PERP MATICUSD_PERP NEARUSD_PERP ROSEUSD_PERP SANDUSD_PERP SOLUSD_PERP THETAUSD_PERP TRXUSD_PERP UNIUSD_PERP XLMUSD_PERP XRPUSD_PERP XTZUSD_PERP)
-INTERVALS=("1m" "5m" "15m" "30m" "1h" "2h" "4h" "6h" "8h" "12h" "1d" "3d" "1w" "1mo")
-YEARS=("2020" "2021" "2022" "2023" "2024" "2025")
+# 당신의 설정 반영
+CM_OR_UM="um"  # um 선물 추천
+INTERVALS=("1h")
+YEARS=("2025")
 MONTHS=("01" "02" "03" "04" "05" "06" "07" "08" "09" "10" "11" "12")
+DEST="/mnt/ssd/binance-data/futures"
 
+BASE_URL="https://data.binance.vision/data/futures/${CM_OR_UM}/monthly/klines"
+mkdir -p "${DEST}"
 
-# First we verify if the CM_OR_UM is correct, if not, we exit
-if [ "$CM_OR_UM" = "cm" ] || [ "$CM_OR_UM" == "um" ]; then
-  BASE_URL="https://data.binance.vision/data/futures/${CM_OR_UM}/monthly/klines"
-else
-  echo "CM_OR_UM can be only cm or um"
-  exit 0
-fi
+# 전체 USDT 선물 심볼 자동 가져오기
+echo "📥 선물 심볼 리스트 자동 생성..."
+curl -s "https://fapi.binance.com/fapi/v1/exchangeInfo" | \
+jq -r '.symbols[] | select(.status=="TRADING" and .contractType=="PERPETUAL") | .symbol' | \
+grep USD > "${DEST}/futures_symbols.txt"
 
-# Function who download the URL, this function is called asynchronously by several child processes
+mapfile -t SYMBOLS < "${DEST}/futures_symbols.txt"
+echo "✅ ${#SYMBOLS[@]}개 선물 심볼 발견!"
+
+# 개선된 병렬 다운로드 함수
 download_url() {
-  url=$1
-
-  response=$(wget --server-response -q ${url} 2>&1 | awk 'NR==1{print $2}')
-  if [ ${response} == '404' ]; then
-    echo "File not exist: ${url}"
-  else
-    echo "downloaded: ${url}"
-  fi
+    local url=$1
+    local localfile="${DEST}/$(basename ${url})"
+    
+    if [[ -f "${localfile}" ]]; then
+        echo "⏭️  이미 존재: $(basename ${url})"
+        return
+    fi
+    
+    if wget -q --show-progress -O "${localfile}" "${url}"; then
+        echo "✅ 완료: $(basename ${url})"
+    else
+        echo "❌ 실패: $(basename ${url})"
+        rm -f "${localfile}"
+    fi
 }
 
+# 병렬 다운로드 (최대 20개 동시 실행)
+MAX_JOBS=20
+counter=0
+total=$(( ${#SYMBOLS[@]} * ${#INTERVALS[@]} * ${#YEARS[@]} * ${#MONTHS[@]} ))
 
-# Main loop who iterate over all the arrays and launch child processes
-for symbol in ${SYMBOLS[@]}; do
-  for interval in ${INTERVALS[@]}; do
-    for year in ${YEARS[@]}; do
-      for month in ${MONTHS[@]}; do
-        url="${BASE_URL}/${symbol}/${interval}/${symbol}-${interval}-${year}-${month}.zip"
-        download_url "${url}" &
-      done
-      wait
+for symbol in "${SYMBOLS[@]}"; do
+    for interval in "${INTERVALS[@]}"; do
+        for year in "${YEARS[@]}"; do
+            for month in "${MONTHS[@]}"; do
+                ((counter++))
+                url="${BASE_URL}/${symbol}/${interval}/${symbol}-${interval}-${year}-${month}.zip"
+                download_url "${url}" &
+                
+                # 동시 실행 제한
+                while [ $(jobs -r | wc -l) -ge ${MAX_JOBS} ]; do
+                    sleep 0.1
+                done
+                
+                echo "🔄 진행: ${counter}/${total} (${symbol})"
+            done
+        done
     done
-  done
 done
+
+wait  # 모든 백그라운드 작업 완료 대기
+echo "🎉 모든 선물 데이터 다운로드 완료!"

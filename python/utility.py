@@ -1,10 +1,9 @@
 import os, sys, re, shutil
 import json
 from pathlib import Path
-from datetime import *
+from enums import *
 import urllib.request
 from argparse import ArgumentParser, RawTextHelpFormatter, ArgumentTypeError
-from enums import *
 
 def get_destination_dir(file_url, folder=None):
   store_directory = os.environ.get('STORE_DIRECTORY')
@@ -65,7 +64,7 @@ def download_file(base_path, file_name, date_range=None, folder=None):
         sys.stdout.write("\r[%s%s]" % ('#' * done, '.' * (50-done)) )    
         sys.stdout.flush()
 
-  except urllib.error.HTTPError:
+  except :
     print("\nFile not found: {}".format(download_url))
     pass
 

@@ -8,7 +8,7 @@
 
 """
 import sys
-from datetime import *
+from datetime import datetime
 
 import pandas as pd
 

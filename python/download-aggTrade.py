@@ -9,10 +9,9 @@
 """
 
 import sys
-from argparse import ArgumentParser, RawTextHelpFormatter, ArgumentTypeError
-from datetime import *
-import pandas as pd
 from enums import *
+from argparse import ArgumentParser, RawTextHelpFormatter, ArgumentTypeError
+import pandas as pd
 from utility import download_file, get_all_symbols, get_parser, get_start_end_date_objects, convert_to_date_object, \
   get_path
 
