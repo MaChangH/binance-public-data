@@ -1,65 +1,67 @@
 #!/bin/bash
 
-# 당신의 설정 반영
-CM_OR_UM="um"  # um 선물 추천
-INTERVALS=("1h")
+CM_OR_UM="um"
+INTERVALS=("5m")
 YEARS=("2025")
-MONTHS=("01" "02" "03" "04" "05" "06" "07" "08" "09" "10" "11" "12")
-DEST="/mnt/ssd/binance-data/futures"
+# MONTHS=("01" "02" "03" "04" "05" "06" "07" "08" "09" "10" "11" "12")
+MONTHS=("01" "02" "03" "04" "05" "06" "07" "08" "09" "10" "11")
 
-BASE_URL="https://data.binance.vision/data/futures/${CM_OR_UM}/monthly/klines"
-mkdir -p "${DEST}"
+SYMBOLS_FILE="test.txt"
+DEST_BASE="/mnt/e/Data/binance-futures/${CM_OR_UM}"
 
-# 전체 USDT 선물 심볼 자동 가져오기
-echo "📥 선물 심볼 리스트 자동 생성..."
-curl -s "https://fapi.binance.com/fapi/v1/exchangeInfo" | \
-jq -r '.symbols[] | select(.status=="TRADING" and .contractType=="PERPETUAL") | .symbol' | \
-grep USD > "${DEST}/futures_symbols.txt"
+if [[ ! -f "${SYMBOLS_FILE}" ]]; then
+  echo "Symbols file not found: ${SYMBOLS_FILE}"
+  exit 1
+fi
 
-mapfile -t SYMBOLS < "${DEST}/futures_symbols.txt"
-echo "✅ ${#SYMBOLS[@]}개 선물 심볼 발견!"
+mapfile -t SYMBOLS < "${SYMBOLS_FILE}"
+echo "Loaded ${#SYMBOLS[@]} symbols from ${SYMBOLS_FILE}"
 
-# 개선된 병렬 다운로드 함수
+if [ "$CM_OR_UM" == "um" ]; then
+  BASE_URL="https://data.binance.vision/data/futures/um/monthly/klines"
+else
+  echo "CM_OR_UM can be only um or cm"
+  exit 0
+fi
+
 download_url() {
-    local url=$1
-    local localfile="${DEST}/$(basename ${url})"
-    
-    if [[ -f "${localfile}" ]]; then
-        echo "⏭️  이미 존재: $(basename ${url})"
-        return
-    fi
-    
-    if wget -q --show-progress -O "${localfile}" "${url}"; then
-        echo "✅ 완료: $(basename ${url})"
-    else
-        echo "❌ 실패: $(basename ${url})"
-        rm -f "${localfile}"
-    fi
+  local url="$1"
+  local out_file="$2"
+
+  # 이미 있으면 스킵
+  if [[ -f "${out_file}" ]]; then
+    echo "skip (exists): ${out_file}"
+    return
+  fi
+
+  # 디렉토리 생성
+  mkdir -p "$(dirname "${out_file}")"
+
+  # 다운로드
+  local response
+  response=$(wget --server-response -q -O "${out_file}" "${url}" 2>&1 | awk 'NR==1{print $2}')
+  if [ "${response}" == "404" ]; then
+    echo "File not exist: ${url}"
+    rm -f "${out_file}"
+  else
+    echo "downloaded: ${out_file}"
+  fi
 }
 
-# 병렬 다운로드 (최대 20개 동시 실행)
-MAX_JOBS=20
-counter=0
-total=$(( ${#SYMBOLS[@]} * ${#INTERVALS[@]} * ${#YEARS[@]} * ${#MONTHS[@]} ))
-
 for symbol in "${SYMBOLS[@]}"; do
-    for interval in "${INTERVALS[@]}"; do
-        for year in "${YEARS[@]}"; do
-            for month in "${MONTHS[@]}"; do
-                ((counter++))
-                url="${BASE_URL}/${symbol}/${interval}/${symbol}-${interval}-${year}-${month}.zip"
-                download_url "${url}" &
-                
-                # 동시 실행 제한
-                while [ $(jobs -r | wc -l) -ge ${MAX_JOBS} ]; do
-                    sleep 0.1
-                done
-                
-                echo "🔄 진행: ${counter}/${total} (${symbol})"
-            done
-        done
-    done
-done
+  for interval in "${INTERVALS[@]}"; do
+    for year in "${YEARS[@]}"; do
+      for month in "${MONTHS[@]}"; do
+        # 원격 파일 URL
+        url="${BASE_URL}/${symbol}/${interval}/${symbol}-${interval}-${year}-${month}.zip"
 
-wait  # 모든 백그라운드 작업 완료 대기
-echo "🎉 모든 선물 데이터 다운로드 완료!"
+        # 심볼 기준 + 연월 기준 로컬 경로
+        local_dir="${DEST_BASE}/${symbol}/${year}-${month}"
+        local_file="${local_dir}/${symbol}-${interval}-${year}-${month}.zip"
+
+        download_url "${url}" "${local_file}" &
+      done
+      wait
+    done
+  done
+done
